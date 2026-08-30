@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { disconnectWhatsAppSession, initWhatsAppBaileys } from '../../../../lib/whatsapp/baileys.js';
+import { disconnectWhatsAppSession, initWhatsAppBaileys } from '@/lib/whatsapp/baileys.js';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
