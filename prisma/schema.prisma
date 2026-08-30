@@ -1,0 +1,252 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum UserRole {
+  OWNER
+  ADMIN
+  AGENT
+}
+
+enum ConversationState {
+  AI_ACTIVE
+  WAITING_FOR_CUSTOMER
+  HUMAN_REQUIRED
+  HUMAN_ACTIVE
+  RESOLVED
+  ARCHIVED
+}
+
+enum MessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum SenderType {
+  CUSTOMER
+  AI
+  AGENT
+  SYSTEM
+}
+
+enum LeadTemperature {
+  HOT
+  WARM
+  COLD
+}
+
+enum LeadStatus {
+  NEW
+  CONTACTED
+  QUALIFIED
+  INTERESTED
+  READY_TO_REGISTER
+  REGISTERED
+  CUSTOMER
+  LOST
+}
+
+model User {
+  id            String         @id @default(uuid())
+  email         String         @unique
+  passwordHash  String
+  name          String
+  role          UserRole       @default(AGENT)
+  isActive      Boolean        @default(true)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  conversations Conversation[] @relation("AgentConversations")
+  leads         Lead[]         @relation("AgentLeads")
+  followUps     FollowUp[]     @relation("AgentFollowUps")
+
+  @@map("users")
+}
+
+model Customer {
+  id             String         @id @default(uuid())
+  whatsappId     String         @unique // Phone number in WhatsApp format (e.g. "2348031234567")
+  phone          String         @unique
+  name           String?
+  email          String?
+  avatarUrl      String?
+  notes          String?        @db.Text
+  marketingOptOut Boolean       @default(false)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  conversations  Conversation[]
+  leadProfile    Lead?          @relation("CustomerLead")
+
+  @@map("customers")
+}
+
+model Lead {
+  id                String          @id @default(uuid())
+  customerId        String          @unique
+  customer          Customer        @relation("CustomerLead", fields: [customerId], onDelete: Cascade)
+  interestedCourse  String?
+  currentLevel      String?         // e.g. "None", "A1", "A2"
+  learningGoal      String?         @db.Text
+  preferredSchedule String?         // e.g. "Evening", "Weekend"
+  location          String?
+  leadScore         Int             @default(0)
+  leadTemperature   LeadTemperature @default(COLD)
+  status            LeadStatus      @default(NEW)
+  assignedAgentId   String?
+  assignedAgent     User?           @relation("AgentLeads", fields: [assignedAgentId], onDelete: SetNull)
+  lastContactAt     DateTime?
+  nextFollowUpAt    DateTime?
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  @@index([status])
+  @@index([leadTemperature])
+  @@map("leads")
+}
+
+model Conversation {
+  id              String            @id @default(uuid())
+  customerId      String
+  customer        Customer          @relation(fields: [customerId], onDelete: Cascade)
+  state           ConversationState @default(AI_ACTIVE)
+  summary         String?           @db.Text // Rolling summary maintained by AI Memory
+  assignedAgentId String?
+  assignedAgent   User?             @relation("AgentConversations", fields: [assignedAgentId], onDelete: SetNull)
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  messages        Message[]
+  events          ConversationEvent[]
+  aiRuns          AiRun[]
+
+  @@index([state])
+  @@map("conversations")
+}
+
+model Message {
+  id                 String           @id @default(uuid())
+  conversationId     String
+  conversation       Conversation     @relation(fields: [conversationId], onDelete: Cascade)
+  externalMessageId  String?          @unique // Message ID from Meta/WhatsApp Cloud API
+  direction          MessageDirection
+  senderType         SenderType
+  senderId           String?          // ID of User if sender is AGENT
+  content            String           @db.Text
+  messageType        String           @default("text") // text, image, document, location, template
+  status             String           @default("sent") // sent, delivered, read, failed
+  intent             String?          // Intent detected by AI (e.g. "PRICE_ENQUIRY")
+  metadata           Json?            // Media URLs, coordinates, template parameters, or error details
+  createdAt          DateTime         @default(now())
+
+  @@index([conversationId])
+  @@index([createdAt])
+  @@map("messages")
+}
+
+model MessageTemplate {
+  id         String   @id @default(uuid())
+  name       String   @unique // e.g. "welcome_message"
+  category   String   // e.g. "welcome", "pricing", "followup"
+  content    String   @db.Text
+  variables  Json?    // Array of variable descriptions
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@map("message_templates")
+}
+
+model KnowledgeItem {
+  id          String   @id @default(uuid())
+  title       String
+  category    String   // e.g. "courses", "pricing", "schedules", "locations"
+  content     String   @db.Text
+  isPublished Boolean  @default(true)
+  priority    Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([category])
+  @@map("knowledge_items")
+}
+
+model Course {
+  id          String   @id @default(uuid())
+  name        String   @unique // e.g. "German A1 Intensive"
+  level       String   // e.g. "A1"
+  price       Decimal  @db.Decimal(10, 2)
+  duration    String   // e.g. "8 weeks"
+  schedule    String   // e.g. "Mon, Wed, Fri 6:00 PM - 8:30 PM"
+  description String?  @db.Text
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("courses")
+}
+
+model Faq {
+  id          String   @id @default(uuid())
+  question    String   @db.Text
+  answer      String   @db.Text
+  isPublished Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("faqs")
+}
+
+model FollowUp {
+  id              String     @id @default(uuid())
+  leadId          String
+  scheduledFor    DateTime
+  messageTemplate String     // Template name/text to send
+  status          String     @default("PENDING") // PENDING, SENT, CANCELLED, FAILED
+  assignedAgentId String?
+  assignedAgent   User?      @relation("AgentFollowUps", fields: [assignedAgentId], onDelete: SetNull)
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  @@index([scheduledFor, status])
+  @@map("follow_ups")
+}
+
+model ConversationEvent {
+  id             String       @id @default(uuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], onDelete: Cascade)
+  eventType      String       // e.g. "LEAD_SCORE_UPGRADED", "HANDOFF_TRIGGERED"
+  description    String       @db.Text
+  metadata       Json?
+  createdAt      DateTime     @default(now())
+
+  @@index([conversationId])
+  @@map("conversation_events")
+}
+
+model AiRun {
+  id             String       @id @default(uuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], onDelete: Cascade)
+  promptTokens   Int          @default(0)
+  responseTokens Int          @default(0)
+  provider       String       // e.g. "openai", "gemini"
+  modelUsed      String
+  latencyMs      Int          @default(0)
+  createdAt      DateTime     @default(now())
+
+  @@map("ai_runs")
+}
+
+model Setting {
+  id          String   @id @default(uuid())
+  key         String   @unique // e.g. "business_hours", "ai_active"
+  value       String   @db.Text
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("settings")
+}

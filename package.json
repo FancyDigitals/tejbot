@@ -2,16 +2,35 @@
   "name": "tejurolex-whatsapp",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "postinstall": "prisma skills sync || exit 0"
   },
   "dependencies": {
+    "@auth/prisma-adapter": "^2.11.3",
+    "@whiskeysockets/baileys": "^7.0.0-rc14",
+    "bcryptjs": "^3.0.3",
+    "clsx": "^2.1.1",
+    "date-fns": "^4.4.0",
+    "dotenv": "^17.4.2",
+    "jimp": "^1.6.1",
+    "lucide-react": "^1.37.0",
+    "nanoid": "^6.0.1",
     "next": "16.3.3",
+    "next-auth": "^4.24.15",
+    "pg": "^8.23.0",
+    "pino": "^10.3.1",
+    "qrcode": "^1.5.4",
+    "qrcode-terminal": "^0.12.0",
     "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react-dom": "19.2.8",
+    "tailwind-merge": "^3.6.0",
+    "uuid": "^14.0.2",
+    "zod": "^4.5.4"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
