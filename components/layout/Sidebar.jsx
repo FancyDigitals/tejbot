@@ -67,10 +67,6 @@ export default function Sidebar({ mobileOpen, setMobileOpen }) {
               <span className="text-[9px] uppercase tracking-wider text-[#63B99B] font-bold block">WHATSAPP BOT</span>
             </div>
           </Link>
-
-          <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-semibold bg-[#F5FAF7] text-[#63B99B] border border-[#63B99B]/30 shrink-0">
-            <Sparkles size={9} className="mr-0.5" /> LIVE
-          </span>
         </div>
 
         {/* Navigation Links */}
