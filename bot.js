@@ -1,6 +1,7 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
+import http from 'http';
 import makeWASocket, {
   useMultiFileAuthState,
   DisconnectReason,
@@ -16,26 +17,34 @@ import { processCustomerMessageWithAI } from './lib/ai/index.js';
 import { CONVERSATION_STATES, SENDER_TYPES } from './lib/constants/statuses.js';
 import { query } from './lib/db/index.js';
 
+// 1. Health-check HTTP server so Render Web Service satisfies health check
+const PORT = process.env.PORT || 3000;
+http.createServer((req, res) => {
+  res.writeHead(200, { 'Content-Type': 'text/plain' });
+  res.end('TEJUROLEX GLOBAL WhatsApp Bot is Running 24/7\n');
+}).listen(PORT, () => {
+  console.log(`🌐 Health-check HTTP server listening on port ${PORT}`);
+});
+
+// 2. WhatsApp Baileys Engine
 async function startWhatsAppBot() {
   console.log('🚀 Starting TEJUROLEX GLOBAL WhatsApp Automation...');
 
-  // Store session credentials locally in 'auth_info_baileys' folder
   const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
   const { version } = await fetchLatestBaileysVersion();
 
   const sock = makeWASocket({
     version,
     auth: state,
-    logger: pino({ level: 'silent' }), // Suppress noise logs
+    logger: pino({ level: 'silent' }),
     printQRInTerminal: false,
   });
 
-  // Handle connection events & display QR code
   sock.ev.on('connection.update', (update) => {
     const { connection, lastDisconnect, qr } = update;
 
     if (qr) {
-      console.log('\n📲 SCAN THIS QR CODE WITH TEJUROLEX WHATSAPP (Linked Devices):\n');
+      console.log('\n📲 SCAN THIS QR CODE WITH TEJUROLEX WHATSAPP:\n');
       qrcode.generate(qr, { small: true });
       console.log('👉 Open WhatsApp → Settings → Linked Devices → Link a Device');
     }
@@ -52,24 +61,20 @@ async function startWhatsAppBot() {
     }
   });
 
-  // Save auth credentials whenever updated
   sock.ev.on('creds.update', saveCreds);
 
-  // Listen for incoming WhatsApp messages
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     if (type !== 'notify') return;
 
     for (const msg of messages) {
-      // Ignore messages sent by ourselves or status updates
       if (msg.key.fromMe) continue;
       if (msg.key.remoteJid === 'status@broadcast') continue;
-      if (msg.key.remoteJid?.endsWith('@g.us')) continue; // Ignore group chats
+      if (msg.key.remoteJid?.endsWith('@g.us')) continue;
 
       const remoteJid = msg.key.remoteJid;
       const rawPhone = remoteJid.replace('@s.whatsapp.net', '');
       const pushName = msg.pushName || 'Customer';
 
-      // Extract message text
       const messageText =
         msg.message?.conversation ||
         msg.message?.extendedTextMessage?.text ||
@@ -81,14 +86,11 @@ async function startWhatsAppBot() {
       console.log(`\n📩 [INBOUND] ${pushName} (${rawPhone}): "${messageText}"`);
 
       try {
-        // 1. Find or create customer in database
         const customer = await findOrCreateCustomer(rawPhone, pushName);
 
-        // 2. Check if customer opted out
         if (customer.marketing_opt_out) {
           const lower = messageText.toLowerCase();
           if (!lower.includes('start') && !lower.includes('hello') && !lower.includes('hi')) {
-            console.log(`[OPTED OUT] Ignoring message from ${rawPhone}`);
             continue;
           }
           await query(
@@ -97,10 +99,8 @@ async function startWhatsAppBot() {
           );
         }
 
-        // 3. Find or create conversation
         const conversation = await getOrCreateConversation(customer.id);
 
-        // 4. Record inbound message
         await recordMessage({
           conversationId: conversation.id,
           externalMessageId: msg.key.id,
@@ -109,13 +109,11 @@ async function startWhatsAppBot() {
           content: messageText,
         });
 
-        // 5. If human staff is actively handling this chat, pause AI
         if (conversation.state === CONVERSATION_STATES.HUMAN_ACTIVE) {
           console.log(`[HUMAN ACTIVE] AI paused for ${rawPhone}`);
           continue;
         }
 
-        // 6. Process message through AI engine (OpenRouter + Knowledge Base)
         console.log(`⚡ Generating AI response for ${pushName}...`);
         const aiResponse = await processCustomerMessageWithAI({
           customer,
@@ -123,23 +121,19 @@ async function startWhatsAppBot() {
           messageText,
         });
 
-        // 7. Update CRM Lead Scoring
         await updateLeadScoreAndStatus(customer.id, {
           intent: aiResponse.intent,
           extractedData: aiResponse.extractedData,
           messageText,
         }).catch(err => console.error('[LEAD UPDATE ERROR]', err.message));
 
-        // 8. Handle human handoff state if triggered
         if (aiResponse.stateChange) {
           await updateConversationState(conversation.id, aiResponse.stateChange);
         }
 
-        // 9. Send WhatsApp reply
         await sock.sendMessage(remoteJid, { text: aiResponse.responseText });
-        console.log(`📤 [AI REPLIED] to ${pushName}: "${aiResponse.responseText.substring(0, 70)}..."`);
+        console.log(`📤 [AI REPLIED] to ${pushName}`);
 
-        // 10. Record outbound message in database
         await recordMessage({
           conversationId: conversation.id,
           direction: 'OUTBOUND',
