@@ -2,12 +2,14 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 import http from 'http';
+import crypto from 'crypto';
+import QRCode from 'qrcode';
 import makeWASocket, {
   useMultiFileAuthState,
   DisconnectReason,
   fetchLatestBaileysVersion
 } from '@whiskeysockets/baileys';
-import qrcode from 'qrcode-terminal';
+import qrcodeTerminal from 'qrcode-terminal';
 import pino from 'pino';
 
 import { findOrCreateCustomer } from './lib/crm/customers.js';
@@ -17,18 +19,34 @@ import { processCustomerMessageWithAI } from './lib/ai/index.js';
 import { CONVERSATION_STATES, SENDER_TYPES } from './lib/constants/statuses.js';
 import { query } from './lib/db/index.js';
 
-// 1. Health-check HTTP server so Render Web Service satisfies health check
+// Helper to save settings in DB
+async function setSetting(key, value) {
+  try {
+    const id = crypto.randomUUID();
+    await query(
+      `INSERT INTO settings (id, key, value, updated_at)
+       VALUES ($1, $2, $3, CURRENT_TIMESTAMP)
+       ON CONFLICT (key) DO UPDATE SET value = $3, updated_at = CURRENT_TIMESTAMP`,
+      [id, key, value]
+    );
+  } catch (err) {
+    console.error(`[DB SETTING ERROR] ${key}:`, err.message);
+  }
+}
+
+// 1. HTTP Server for Health Checks
 const PORT = process.env.PORT || 3000;
 http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/plain' });
-  res.end('TEJUROLEX GLOBAL WhatsApp Bot is Running 24/7\n');
+  res.end('TEJUROLEX GLOBAL WhatsApp Bot Engine Running 24/7\n');
 }).listen(PORT, () => {
-  console.log(`🌐 Health-check HTTP server listening on port ${PORT}`);
+  console.log(`🌐 Bot HTTP Server running on port ${PORT}`);
 });
 
 // 2. WhatsApp Baileys Engine
 async function startWhatsAppBot() {
   console.log('🚀 Starting TEJUROLEX GLOBAL WhatsApp Automation...');
+  await setSetting('whatsapp_status', 'CONNECTING');
 
   const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
   const { version } = await fetchLatestBaileysVersion();
@@ -40,24 +58,47 @@ async function startWhatsAppBot() {
     printQRInTerminal: false,
   });
 
-  sock.ev.on('connection.update', (update) => {
+  sock.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect, qr } = update;
 
     if (qr) {
-      console.log('\n📲 SCAN THIS QR CODE WITH TEJUROLEX WHATSAPP:\n');
-      qrcode.generate(qr, { small: true });
-      console.log('👉 Open WhatsApp → Settings → Linked Devices → Link a Device');
+      console.log('\n📲 QR CODE GENERATED! Scanning available in terminal & Web UI:\n');
+      qrcodeTerminal.generate(qr, { small: true });
+
+      try {
+        const qrDataUrl = await QRCode.toDataURL(qr, {
+          margin: 2,
+          width: 320,
+          color: { dark: '#111111', light: '#FFFFFF' }
+        });
+        await setSetting('whatsapp_qr', qrDataUrl);
+        await setSetting('whatsapp_status', 'SCAN_QR');
+      } catch (err) {
+        console.error('[QR CONVERT ERROR]', err);
+      }
     }
 
     if (connection === 'close') {
-      const shouldReconnect = (lastDisconnect?.error)?.output?.statusCode !== DisconnectReason.loggedOut;
+      const statusCode = (lastDisconnect?.error)?.output?.statusCode;
+      const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+
+      await setSetting('whatsapp_status', 'DISCONNECTED');
+      await setSetting('whatsapp_qr', '');
+
       console.log('⚠️ Connection closed. Reconnecting...', shouldReconnect);
       if (shouldReconnect) {
         startWhatsAppBot();
       }
     } else if (connection === 'open') {
-      console.log('\n✅ TEJUROLEX GLOBAL WHATSAPP IS CONNECTED & LIVE!');
-      console.log('🤖 AI Auto-Responder is actively monitoring incoming chats.\n');
+      const phone = sock.user?.id ? sock.user.id.split(':')[0] : 'Unknown';
+      const name = sock.user?.name || 'TEJUROLEX GLOBAL';
+
+      await setSetting('whatsapp_status', 'CONNECTED');
+      await setSetting('whatsapp_qr', '');
+      await setSetting('whatsapp_phone', phone);
+      await setSetting('whatsapp_name', name);
+
+      console.log(`\n✅ TEJUROLEX WHATSAPP CONNECTED: +${phone} (${name})`);
     }
   });
 
