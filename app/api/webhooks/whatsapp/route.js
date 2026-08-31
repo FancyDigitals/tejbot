@@ -11,46 +11,52 @@ import { query } from '@/lib/db/index.js';
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
+const VERIFY_TOKEN =
+  process.env.WHATSAPP_VERIFY_TOKEN || 'tejurolex_webhook_verify_2026';
+
+// Meta webhook verification
 export async function GET(request) {
-  const { searchParams } = new URL(request.url);
-  const mode = searchParams.get('hub.mode');
-  const token = searchParams.get('hub.verify_token');
-  const challenge = searchParams.get('hub.challenge');
+  try {
+    const { searchParams } = new URL(request.url);
+    const mode = searchParams.get('hub.mode');
+    const token = searchParams.get('hub.verify_token');
+    const challenge = searchParams.get('hub.challenge');
 
-  if (mode === 'subscribe' && token === process.env.WHATSAPP_VERIFY_TOKEN) {
-    console.log('[WEBHOOK] Verified by Meta');
-    return new Response(challenge, { status: 200 });
+    console.log('[WEBHOOK VERIFY]', { mode, tokenMatch: token === VERIFY_TOKEN, hasChallenge: !!challenge });
+
+    if (mode === 'subscribe' && token === VERIFY_TOKEN && challenge) {
+      return new Response(challenge, {
+        status: 200,
+        headers: { 'Content-Type': 'text/plain' },
+      });
+    }
+
+    return new Response('Forbidden', { status: 403 });
+  } catch (error) {
+    console.error('[WEBHOOK VERIFY ERROR]', error);
+    return new Response('Error', { status: 500 });
   }
-
-  return new Response('Forbidden', { status: 403 });
 }
 
+// Incoming WhatsApp messages
 export async function POST(request) {
   try {
     const body = await request.json();
     const incomingMessages = extractWhatsAppMessages(body);
 
+    // Always 200 quickly for Meta
     if (!incomingMessages.length) {
-      return NextResponse.json({ status: 'ok' }, { status: 200 });
+      return NextResponse.json({ status: 'ok' });
     }
 
     for (const msg of incomingMessages) {
-      if (!msg.text || msg.text.trim().length === 0) continue;
+      if (!msg.text?.trim()) continue;
+
+      console.log(`[INBOUND] ${msg.from}: ${msg.text.substring(0, 80)}`);
 
       markWhatsAppMessageAsRead(msg.messageId).catch(() => {});
+
       const customer = await findOrCreateCustomer(msg.from, msg.name);
-
-      if (customer.marketing_opt_out) {
-        const lower = msg.text.toLowerCase();
-        if (!lower.includes('start') && !lower.includes('hello') && !lower.includes('hi')) {
-          continue;
-        }
-        await query(
-          `UPDATE customers SET marketing_opt_out = FALSE, updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
-          [customer.id]
-        );
-      }
-
       const conversation = await getOrCreateConversation(customer.id);
 
       const record = await recordMessage({
@@ -75,14 +81,7 @@ export async function POST(request) {
         intent: aiResponse.intent,
         extractedData: aiResponse.extractedData,
         messageText: msg.text,
-      }).catch((err) => console.error('[LEAD UPDATE ERROR]', err.message));
-
-      if (aiResponse.optOut) {
-        await query(
-          `UPDATE customers SET marketing_opt_out = TRUE, updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
-          [customer.id]
-        );
-      }
+      }).catch(() => {});
 
       if (aiResponse.stateChange) {
         await updateConversationState(conversation.id, aiResponse.stateChange);
@@ -92,7 +91,7 @@ export async function POST(request) {
 
       await recordMessage({
         conversationId: conversation.id,
-        externalMessageId: sendResult.messageId || null,
+        externalMessageId: sendResult?.messageId || null,
         direction: 'OUTBOUND',
         senderType: SENDER_TYPES.AI,
         content: aiResponse.responseText,
@@ -100,9 +99,10 @@ export async function POST(request) {
       });
     }
 
-    return NextResponse.json({ status: 'success' }, { status: 200 });
+    return NextResponse.json({ status: 'success' });
   } catch (error) {
-    console.error('[WEBHOOK ERROR]', error);
-    return NextResponse.json({ error: 'Internal error' }, { status: 500 });
+    console.error('[WEBHOOK POST ERROR]', error);
+    // Still return 200 so Meta does not disable webhook
+    return NextResponse.json({ status: 'error_handled' });
   }
 }
