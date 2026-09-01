@@ -2,6 +2,8 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 import http from 'http';
+import fs from 'fs';
+import path from 'path';
 import crypto from 'crypto';
 import QRCode from 'qrcode';
 import makeWASocket, {
@@ -19,7 +21,8 @@ import { processCustomerMessageWithAI } from './lib/ai/index.js';
 import { CONVERSATION_STATES, SENDER_TYPES } from './lib/constants/statuses.js';
 import { query } from './lib/db/index.js';
 
-// Helper to save settings in DB
+let activeSock = null;
+
 async function setSetting(key, value) {
   try {
     const id = crypto.randomUUID();
@@ -34,16 +37,46 @@ async function setSetting(key, value) {
   }
 }
 
-// 1. HTTP Server for Health Checks
-const PORT = process.env.PORT || 3000;
-http.createServer((req, res) => {
+// HTTP Health Check Server
+const PORT = process.env.PORT || 3005;
+const server = http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/plain' });
   res.end('TEJUROLEX GLOBAL WhatsApp Bot Engine Running 24/7\n');
-}).listen(PORT, () => {
+});
+
+server.on('error', (err) => {
+  if (err.code !== 'EADDRINUSE') {
+    console.error('[HTTP ERROR]', err.message);
+  }
+});
+
+server.listen(PORT, () => {
   console.log(`🌐 Bot HTTP Server running on port ${PORT}`);
 });
 
-// 2. WhatsApp Baileys Engine
+// Periodically check if Disconnect was triggered from Web UI
+setInterval(async () => {
+  try {
+    const res = await query(`SELECT value FROM settings WHERE key = 'whatsapp_status' LIMIT 1`);
+    const status = res.rows[0]?.value;
+
+    if (status === 'DISCONNECTED' && activeSock) {
+      console.log('⚠️ Disconnect requested from Web UI. Cleaning session & restarting for new QR...');
+      try {
+        await activeSock.logout();
+      } catch {}
+      activeSock = null;
+
+      const sessionPath = path.join(process.cwd(), 'auth_info_baileys');
+      if (fs.existsSync(sessionPath)) {
+        fs.rmSync(sessionPath, { recursive: true, force: true });
+      }
+
+      startWhatsAppBot();
+    }
+  } catch {}
+}, 4000);
+
 async function startWhatsAppBot() {
   console.log('🚀 Starting TEJUROLEX GLOBAL WhatsApp Automation...');
   await setSetting('whatsapp_status', 'CONNECTING');
@@ -58,11 +91,13 @@ async function startWhatsAppBot() {
     printQRInTerminal: false,
   });
 
+  activeSock = sock;
+
   sock.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect, qr } = update;
 
     if (qr) {
-      console.log('\n📲 QR CODE GENERATED! Scanning available in terminal & Web UI:\n');
+      console.log('\n📲 FRESH QR CODE GENERATED:\n');
       qrcodeTerminal.generate(qr, { small: true });
 
       try {
@@ -80,15 +115,23 @@ async function startWhatsAppBot() {
 
     if (connection === 'close') {
       const statusCode = (lastDisconnect?.error)?.output?.statusCode;
-      const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+      const isLoggedOut = statusCode === DisconnectReason.loggedOut;
 
+      activeSock = null;
       await setSetting('whatsapp_status', 'DISCONNECTED');
       await setSetting('whatsapp_qr', '');
+      await setSetting('whatsapp_phone', '');
+      await setSetting('whatsapp_name', '');
 
-      console.log('⚠️ Connection closed. Reconnecting...', shouldReconnect);
-      if (shouldReconnect) {
-        startWhatsAppBot();
+      if (isLoggedOut) {
+        const sessionPath = path.join(process.cwd(), 'auth_info_baileys');
+        if (fs.existsSync(sessionPath)) {
+          fs.rmSync(sessionPath, { recursive: true, force: true });
+        }
       }
+
+      console.log('⚠️ Connection closed. Reconnecting...');
+      setTimeout(() => startWhatsAppBot(), 3000);
     } else if (connection === 'open') {
       const phone = sock.user?.id ? sock.user.id.split(':')[0] : 'Unknown';
       const name = sock.user?.name || 'TEJUROLEX GLOBAL';
