@@ -22,6 +22,7 @@ import { CONVERSATION_STATES, SENDER_TYPES } from './lib/constants/statuses.js';
 import { query } from './lib/db/index.js';
 
 let activeSock = null;
+let isConnecting = false;
 
 async function setSetting(key, value) {
   try {
@@ -54,32 +55,39 @@ server.listen(PORT, () => {
   console.log(`🌐 Bot HTTP Server running on port ${PORT}`);
 });
 
-// Periodically check if Disconnect was triggered from Web UI
+// Watch PostgreSQL for Web UI Disconnect Trigger
 setInterval(async () => {
   try {
     const res = await query(`SELECT value FROM settings WHERE key = 'whatsapp_status' LIMIT 1`);
     const status = res.rows[0]?.value;
 
-    if (status === 'DISCONNECTED' && activeSock) {
-      console.log('⚠️ Disconnect requested from Web UI. Cleaning session & restarting for new QR...');
-      try {
-        await activeSock.logout();
-      } catch {}
-      activeSock = null;
+    if (status === 'DISCONNECT_REQUESTED') {
+      console.log('⚠️ Disconnect requested from Web UI. Cleaning session...');
+      if (activeSock) {
+        try { await activeSock.logout(); } catch {}
+        activeSock = null;
+      }
 
       const sessionPath = path.join(process.cwd(), 'auth_info_baileys');
       if (fs.existsSync(sessionPath)) {
         fs.rmSync(sessionPath, { recursive: true, force: true });
       }
 
-      startWhatsAppBot();
+      await setSetting('whatsapp_status', 'DISCONNECTED');
+      await setSetting('whatsapp_qr', '');
+      await setSetting('whatsapp_phone', '');
+      await setSetting('whatsapp_name', '');
+
+      setTimeout(() => startWhatsAppBot(), 2000);
     }
   } catch {}
-}, 4000);
+}, 3000);
 
 async function startWhatsAppBot() {
-  console.log('🚀 Starting TEJUROLEX GLOBAL WhatsApp Automation...');
-  await setSetting('whatsapp_status', 'CONNECTING');
+  if (isConnecting) return;
+  isConnecting = true;
+
+  console.log('🚀 Starting TEJUROLEX GLOBAL WhatsApp Engine...');
 
   const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
   const { version } = await fetchLatestBaileysVersion();
@@ -89,6 +97,9 @@ async function startWhatsAppBot() {
     auth: state,
     logger: pino({ level: 'silent' }),
     printQRInTerminal: false,
+    connectTimeoutMs: 60000,
+    defaultQueryTimeoutMs: 60000,
+    keepAliveIntervalMs: 25000,
   });
 
   activeSock = sock;
@@ -97,7 +108,7 @@ async function startWhatsAppBot() {
     const { connection, lastDisconnect, qr } = update;
 
     if (qr) {
-      console.log('\n📲 FRESH QR CODE GENERATED:\n');
+      console.log('\n📲 QR CODE GENERATED:\n');
       qrcodeTerminal.generate(qr, { small: true });
 
       try {
@@ -114,25 +125,28 @@ async function startWhatsAppBot() {
     }
 
     if (connection === 'close') {
+      isConnecting = false;
+      activeSock = null;
       const statusCode = (lastDisconnect?.error)?.output?.statusCode;
       const isLoggedOut = statusCode === DisconnectReason.loggedOut;
 
-      activeSock = null;
-      await setSetting('whatsapp_status', 'DISCONNECTED');
-      await setSetting('whatsapp_qr', '');
-      await setSetting('whatsapp_phone', '');
-      await setSetting('whatsapp_name', '');
+      console.log(`⚠️ Connection closed (Status ${statusCode}). Is logged out: ${isLoggedOut}`);
 
       if (isLoggedOut) {
+        await setSetting('whatsapp_status', 'DISCONNECTED');
+        await setSetting('whatsapp_qr', '');
+        await setSetting('whatsapp_phone', '');
+        await setSetting('whatsapp_name', '');
+
         const sessionPath = path.join(process.cwd(), 'auth_info_baileys');
         if (fs.existsSync(sessionPath)) {
           fs.rmSync(sessionPath, { recursive: true, force: true });
         }
       }
 
-      console.log('⚠️ Connection closed. Reconnecting...');
-      setTimeout(() => startWhatsAppBot(), 3000);
+      setTimeout(() => startWhatsAppBot(), 4000);
     } else if (connection === 'open') {
+      isConnecting = false;
       const phone = sock.user?.id ? sock.user.id.split(':')[0] : 'Unknown';
       const name = sock.user?.name || 'TEJUROLEX GLOBAL';
 
@@ -141,7 +155,7 @@ async function startWhatsAppBot() {
       await setSetting('whatsapp_phone', phone);
       await setSetting('whatsapp_name', name);
 
-      console.log(`\n✅ TEJUROLEX WHATSAPP CONNECTED: +${phone} (${name})`);
+      console.log(`\n✅ TEJUROLEX WHATSAPP CONNECTED: +${phone} (${name})\n`);
     }
   });
 
@@ -167,7 +181,7 @@ async function startWhatsAppBot() {
 
       if (!messageText.trim()) continue;
 
-      console.log(`\n📩 [INBOUND] ${pushName} (${rawPhone}): "${messageText}"`);
+      console.log(`📩 [INBOUND] ${pushName} (${rawPhone}): "${messageText}"`);
 
       try {
         const customer = await findOrCreateCustomer(rawPhone, pushName);

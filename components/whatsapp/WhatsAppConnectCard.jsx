@@ -1,6 +1,6 @@
 'use client';
 import React, { useState, useEffect } from 'react';
-import { QrCode, CheckCircle2, RefreshCw, PowerOff, Smartphone, Sparkles, ShieldCheck } from 'lucide-react';
+import { CheckCircle2, RefreshCw, PowerOff, Smartphone, Sparkles, ShieldCheck } from 'lucide-react';
 import Button from '../ui/Button';
 import Badge from '../ui/Badge';
 
@@ -13,15 +13,25 @@ export default function WhatsAppConnectCard() {
   });
   const [loading, setLoading] = useState(false);
 
-  // Poll for real-time QR / connection status every 3 seconds
   useEffect(() => {
-    let interval;
+    let isMounted = true;
+
     const fetchStatus = async () => {
       try {
         const res = await fetch('/api/whatsapp/qr');
-        if (res.ok) {
+        if (res.ok && isMounted) {
           const data = await res.json();
-          setSession(data);
+          setSession(prev => {
+            // Avoid state re-renders if nothing changed
+            if (
+              prev.status === data.status &&
+              prev.qrCodeDataUrl === data.qrCodeDataUrl &&
+              prev.connectedPhone === data.connectedPhone
+            ) {
+              return prev;
+            }
+            return data;
+          });
         }
       } catch (err) {
         console.error('Failed to poll WA status:', err);
@@ -29,8 +39,11 @@ export default function WhatsAppConnectCard() {
     };
 
     fetchStatus();
-    interval = setInterval(fetchStatus, 3000);
-    return () => clearInterval(interval);
+    const interval = setInterval(fetchStatus, 3000);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
   }, []);
 
   const handleDisconnect = async () => {
@@ -73,7 +86,7 @@ export default function WhatsAppConnectCard() {
               READY FOR SCAN
             </Badge>
           ) : (
-            <Badge variant="default">INITIALIZING...</Badge>
+            <Badge variant="default">INITIALIZING ENGINE...</Badge>
           )}
         </div>
       </div>
@@ -123,7 +136,7 @@ export default function WhatsAppConnectCard() {
               className="w-60 h-60 object-contain rounded-lg"
             />
             <p className="text-[11px] text-[#667085] font-semibold mt-2 flex items-center">
-              <RefreshCw size={11} className="mr-1 animate-spin text-[#63B99B]" /> Auto-refreshes live
+              <RefreshCw size={11} className="mr-1 animate-spin text-[#63B99B]" /> Live QR active
             </p>
           </div>
 
@@ -151,7 +164,7 @@ export default function WhatsAppConnectCard() {
         <div className="py-12 flex flex-col items-center justify-center space-y-3 text-center">
           <RefreshCw size={28} className="text-[#63B99B] animate-spin" />
           <p className="text-xs font-semibold text-[#111111]">Starting WhatsApp Engine & Generating QR Code...</p>
-          <p className="text-[11px] text-[#667085]">Please wait a few seconds.</p>
+          <p className="text-[11px] text-[#667085]">Please run `node bot.js` or wait a few seconds.</p>
         </div>
       )}
     </div>
