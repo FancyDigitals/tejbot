@@ -77,6 +77,19 @@ export async function POST(request) {
         messageText: msg.text,
       });
 
+      if (aiResponse.optOut) {
+  await query(
+    `
+      UPDATE customers
+      SET
+        marketing_opt_out = TRUE,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = $1
+    `,
+    [customer.id]
+  );
+}
+
       await updateLeadScoreAndStatus(customer.id, {
         intent: aiResponse.intent,
         extractedData: aiResponse.extractedData,

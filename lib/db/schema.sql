@@ -79,4 +79,46 @@ CREATE TABLE IF NOT EXISTS knowledge_items (
 );
 
 CREATE TABLE IF NOT EXISTS courses (
-  
+  id VARCHAR(36) PRIMARY KEY,
+  name VARCHAR(255) NOT NULL,
+  level VARCHAR(100),
+  price NUMERIC(12, 2),
+  duration VARCHAR(255),
+  schedule VARCHAR(255),
+  description TEXT,
+  is_active BOOLEAN DEFAULT TRUE,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS faqs (
+  id VARCHAR(36) PRIMARY KEY,
+  question TEXT NOT NULL,
+  answer TEXT NOT NULL,
+  is_published BOOLEAN DEFAULT TRUE,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS ai_runs (
+  id VARCHAR(36) PRIMARY KEY,
+  conversation_id VARCHAR(36) REFERENCES conversations(id) ON DELETE CASCADE,
+  prompt_tokens INTEGER DEFAULT 0,
+  response_tokens INTEGER DEFAULT 0,
+  provider VARCHAR(100),
+  model_used VARCHAR(255),
+  latency_ms INTEGER DEFAULT 0,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_knowledge_published
+ON knowledge_items(is_published);
+
+CREATE INDEX IF NOT EXISTS idx_courses_active
+ON courses(is_active);
+
+CREATE INDEX IF NOT EXISTS idx_faqs_published
+ON faqs(is_published);
+
+CREATE INDEX IF NOT EXISTS idx_ai_runs_conversation
+ON ai_runs(conversation_id);

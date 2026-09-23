@@ -108,7 +108,7 @@ export default function Sidebar({ mobileOpen, setMobileOpen }) {
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-xs font-semibold text-[#111111] truncate">Tejurolex Admin</p>
-              <p className="text-[10px] text-[#667085] truncate">tejurolexglobal.com.ng</p>
+              <p className="text-[10px] text-[#667085] truncate">tejurolexglobal.com</p>
             </div>
           </div>
         </div>

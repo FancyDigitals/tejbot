@@ -36,9 +36,9 @@ export default function SettingsPage() {
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <Input label="Company Name" defaultValue="TEJUROLEX GLOBAL" readOnly />
-            <Input label="Official Website" defaultValue="tejurolexglobal.com.ng" readOnly />
+            <Input label="Official Website" defaultValue="tejurolexglobal.com" readOnly />
           </div>
-          <Input label="Head Office Address" defaultValue="12 Airport Road, Ikeja, Lagos, Nigeria" />
+          <Input label="Head Office Address" defaultValue="Suit 43, Primal Tek Plaza, Egbeda, Lagos, Nigeria" />
         </div>
 
         {/* Business Hours */}
